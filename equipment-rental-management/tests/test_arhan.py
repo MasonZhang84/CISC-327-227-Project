@@ -304,3 +304,99 @@ def testAvailabilityNeverGoesBelowZero(client):
 def testAvailabilityOfNonexistentEquipmentReturns404(client):
     response = client.get("/equipment/999/availability")
     assert response.status_code == 404
+    assert response.get_json() == {"error": "Equipment not found"}
+
+
+# Look up rentals (GET /rentals?renter_id=&equipment_id=, Rentals page)
+
+# Creates two renters who each rent the other's numbered equipment and returns the rentals.
+# Renter 1 rents equipment 2 and renter 2 rents equipment 1, so a filter that confuses
+# renter_id with equipment_id returns the wrong rental. It takes the test client as a parameter.
+def makeCrossedRentals(client):
+    drill = makeEquipment(client, "Drill")
+    saw = makeEquipment(client, "Saw")
+    alice = makeRenter(client, "Alice", "alice@example.com")
+    bob = makeRenter(client, "Bob", "bob@example.com")
+    aliceRental = checkout(client, saw["id"], alice["id"])
+    checkout(client, drill["id"], bob["id"])
+    return {"alice": alice, "saw": saw, "alice_rental": aliceRental}
+
+# Tests that each rental records the renter, the equipment, and a due date 7 days out (R4).
+def testListRentalsReturnsEveryRentalWithDueDate(client):
+    makeCrossedRentals(client)
+
+    rentals = client.get("/rentals").get_json()
+
+    assert len(rentals) == 2
+    for rental in rentals:
+        rentalDate = date.fromisoformat(rental["rental_date"])
+        dueDate = date.fromisoformat(rental["due_date"])
+        assert rentalDate == date.today()
+        assert (dueDate - rentalDate).days == 7
+        assert rental["return_date"] is None
+
+# Tests that looking up rentals by equipment id returns only that equipment's rentals.
+def testLookupRentalsByEquipmentId(client):
+    rentals = makeCrossedRentals(client)
+
+    response = client.get(f"/rentals?equipment_id={rentals['saw']['id']}")
+
+    assert response.status_code == 200
+    assert response.get_json() == [rentals["alice_rental"]]
+
+# Tests that the clerk can look up rental information for a renter (R7).
+# Expected: only Alice's rental (equipment = Saw) is returned.
+# Known defect: the renter_id filter compares against equipment_id, so it returns Bob's rental of equipment #1 instead.
+def testLookupRentalsByRenterId(client):
+    rentals = makeCrossedRentals(client)
+
+    response = client.get(f"/rentals?renter_id={rentals['alice']['id']}")
+
+    assert response.status_code == 200
+    assert response.get_json() == [rentals["alice_rental"]]
+
+# Tests that a lookup with no matching rentals returns an empty list.
+def testLookupRentalsWithNoMatchesReturnsEmptyList(client):
+    makeCrossedRentals(client)
+
+    response = client.get("/rentals?equipment_id=999")
+
+    assert response.status_code == 200
+    assert response.get_json() == []
+
+# Tests that returned rentals stay in the equipment's rental history (R6).
+def testLookupKeepsReturnedRentalInHistory(client):
+    item = makeEquipment(client)
+    renter = makeRenter(client)
+    firstRental = checkout(client, item["id"], renter["id"])
+    client.put(f"/rentals/{firstRental['id']}/return")
+    secondRental = checkout(client, item["id"], renter["id"])
+
+    history = client.get(f"/rentals?equipment_id={item['id']}").get_json()
+
+    assert [rental["id"] for rental in history] == [firstRental["id"], secondRental["id"]]
+    assert history[0]["return_date"] == date.today().isoformat()
+    assert history[1]["return_date"] is None
+
+# Tests that deleting a piece of equipment does not erase its rental history (R6).
+def testLookupKeepsHistoryAfterEquipmentIsDeleted(client):
+    item = makeEquipment(client)
+    renter = makeRenter(client)
+    rental = checkout(client, item["id"], renter["id"])
+
+    client.delete(f"/equipment/{item['id']}")
+
+    assert client.get(f"/rentals?equipment_id={item['id']}").get_json() == [rental]
+
+# Tests that the Rentals page lists a rental and only shows its Return button until it is returned.
+def testRentalsPageListsRentalAndReturnButton(client):
+    item = makeEquipment(client)
+    renter = makeRenter(client)
+    rental = checkout(client, item["id"], renter["id"])
+
+    page = client.get("/ui/rentals").get_data(as_text=True)
+    assert rental["due_date"] in page
+    assert f"/ui/rentals/{rental['id']}/return" in page
+
+    client.put(f"/rentals/{rental['id']}/return")
+    page = client.get("/ui/rentals").get_data(as_text=True)
