@@ -400,3 +400,66 @@ def testRentalsPageListsRentalAndReturnButton(client):
 
     client.put(f"/rentals/{rental['id']}/return")
     page = client.get("/ui/rentals").get_data(as_text=True)
+    assert f"/ui/rentals/{rental['id']}/return" not in page
+
+
+# Release a deposit (PUT /rentals/<id>/deposit/release)
+
+# Creates a rental with a deposit, returns the equipment, and returns the rental. It takes the test client and the deposit amount as parameters.
+def makeReturnedRentalWithDeposit(client, depositAmount=100.0):
+    item = makeEquipment(client)
+    renter = makeRenter(client)
+    rental = checkout(client, item["id"], renter["id"], deposit_amount=depositAmount)
+    client.put(f"/rentals/{rental['id']}/return")
+    return rental
+
+# Tests that the deposit amount is stored on the rental and starts unreleased (R13).
+def testCheckoutRecordsDepositAsHeld(client):
+    item = makeEquipment(client)
+    renter = makeRenter(client)
+    rental = checkout(client, item["id"], renter["id"], deposit_amount=75.5)
+
+    stored = client.get(f"/rentals?equipment_id={item['id']}").get_json()[0]
+
+    assert stored["id"] == rental["id"]
+    assert stored["deposit_amount"] == 75.5
+    assert stored["deposit_released"] is False
+
+# Tests that releasing a deposit after the return reports it as released.
+def testReleaseDepositAfterReturnReportsReleased(client):
+    rental = makeReturnedRentalWithDeposit(client)
+
+    response = client.put(f"/rentals/{rental['id']}/deposit/release")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"rental_id": rental["id"], "deposit_released": True}
+
+# Tests that once released, the rental record shows the deposit as released (R13).
+# Expected: a later lookup shows deposit_released == True.
+# Known defect: release_deposit() returns True in its response but never sets rental.deposit_released, so the stored value stays False.
+def testReleaseDepositIsPersistedOnRental(client):
+    rental = makeReturnedRentalWithDeposit(client)
+
+    client.put(f"/rentals/{rental['id']}/deposit/release")
+
+    stored = client.get(f"/rentals?equipment_id={rental['equipment_id']}").get_json()[0]
+    assert stored["deposit_released"] is True
+
+# Tests that a deposit cannot be released before the equipment is returned.
+def testReleaseDepositBeforeReturnIsRejected(client):
+    item = makeEquipment(client)
+    renter = makeRenter(client)
+    rental = checkout(client, item["id"], renter["id"], deposit_amount=100.0)
+
+    response = client.put(f"/rentals/{rental['id']}/deposit/release")
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "Equipment has not been returned yet"}
+    stored = client.get(f"/rentals?equipment_id={item['id']}").get_json()[0]
+    assert stored["deposit_released"] is False
+
+# Tests that releasing the deposit of a rental that does not exist returns a 404 error.
+def testReleaseDepositForNonexistentRentalReturns404(client):
+    response = client.put("/rentals/999/deposit/release")
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Rental not found"}
