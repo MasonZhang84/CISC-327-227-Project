@@ -159,3 +159,148 @@ def testRentersPageDeleteButtonRemovesRenter(client):
 
     assert response.status_code == 302
     assert client.get("/renters").get_json() == []
+    assert "Dave" not in client.get("/ui/renters").get_data(as_text=True)
+
+
+# Update equipment (PUT /equipment/<id>)
+
+# Tests that updated equipment fields are still there on a later GET.
+def testUpdateEquipmentPersistsNewValues(client):
+    item = makeEquipment(client, "Drill", "Power", totalUnits=2)
+
+    response = client.put(
+        f"/equipment/{item['id']}",
+        json={"name": "Hammer Drill", "category": "Tools", "total_units": 4},
+    )
+    assert response.status_code == 200
+
+    stored = client.get(f"/equipment/{item['id']}").get_json()
+    assert stored["name"] == "Hammer Drill"
+    assert stored["category"] == "Tools"
+    assert stored["total_units"] == 4
+
+# Tests that updating only the name keeps the other equipment fields the same.
+def testPartialUpdateEquipmentKeepsOtherFields(client):
+    item = makeEquipment(client, "Drill", "Power", totalUnits=2)
+
+    client.put(f"/equipment/{item['id']}", json={"name": "Cordless Drill"})
+
+    stored = client.get(f"/equipment/{item['id']}").get_json()
+    assert stored == {**item, "name": "Cordless Drill"}
+
+# Tests that updating equipment that does not exist returns 404 and creates nothing.
+def testUpdateNonexistentEquipmentReturns404(client):
+    response = client.put("/equipment/999", json={"name": "Ghost"})
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Equipment not found"}
+    assert client.get("/equipment").get_json() == []
+
+
+# Set equipment status (PATCH /equipment/<id>/status)
+
+# Tests that marking equipment out of service is stored and shown on later reads (R10).
+def testMarkEquipmentOutOfServicePersists(client):
+    item = makeEquipment(client)
+
+    response = client.patch(
+        f"/equipment/{item['id']}/status", json={"is_available": False}
+    )
+    assert response.status_code == 200
+    assert response.get_json()["is_available"] is False
+
+    assert client.get(f"/equipment/{item['id']}").get_json()["is_available"] is False
+    availability = client.get(f"/equipment/{item['id']}/availability").get_json()
+    assert availability["is_available"] is False
+
+# Tests that equipment can be put back into service after being taken out.
+def testEquipmentCanBeReturnedToService(client):
+    item = makeEquipment(client)
+    client.patch(f"/equipment/{item['id']}/status", json={"is_available": False})
+
+    client.patch(f"/equipment/{item['id']}/status", json={"is_available": True})
+
+    assert client.get(f"/equipment/{item['id']}").get_json()["is_available"] is True
+
+# Tests that changing the status does not change the unit counts.
+def testStatusChangeDoesNotAlterUnitCounts(client):
+    item = makeEquipment(client, totalUnits=3)
+
+    client.patch(f"/equipment/{item['id']}/status", json={"is_available": False})
+
+    stored = client.get(f"/equipment/{item['id']}").get_json()
+    assert stored["total_units"] == 3
+    assert stored["available_units"] == 3
+
+# Tests that setting the status of equipment that does not exist returns a 404 error.
+def testSetStatusOnNonexistentEquipmentReturns404(client):
+    response = client.patch("/equipment/999/status", json={"is_available": False})
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Equipment not found"}
+
+# Tests that gear marked out of service cannot be rented (R10, R11).
+# Expected: checkout is rejected (400) and no units are deducted.
+# Known defect: checkout_equipment() never checks is_available.
+def testOutOfServiceEquipmentCannotBeCheckedOut(client):
+    item = makeEquipment(client, totalUnits=2)
+    renter = makeRenter(client)
+    client.patch(f"/equipment/{item['id']}/status", json={"is_available": False})
+
+    response = client.post(
+        "/rentals", json={"equipment_id": item["id"], "renter_id": renter["id"]}
+    )
+
+    assert response.status_code == 400
+    assert client.get(f"/equipment/{item['id']}/availability").get_json()["available_units"] == 2
+    assert client.get("/rentals").get_json() == []
+
+
+# View equipment availability (GET /equipment/<id>/availability)
+
+# Tests that availability drops by one per checkout and is restored on return.
+def testAvailabilityTracksCheckoutAndReturn(client):
+    item = makeEquipment(client, totalUnits=2)
+    renter = makeRenter(client)
+    availabilityUrl = f"/equipment/{item['id']}/availability"
+
+    rental = checkout(client, item["id"], renter["id"])
+    assert client.get(availabilityUrl).get_json()["available_units"] == 1
+
+    client.put(f"/rentals/{rental['id']}/return")
+    assert client.get(availabilityUrl).get_json() == {
+        "equipment_id": item["id"],
+        "is_available": True,
+        "available_units": 2,
+        "total_units": 2,
+    }
+
+# Tests that availability reaches zero when every unit is rented.
+def testAvailabilityReachesZeroWhenAllUnitsRented(client):
+    item = makeEquipment(client, totalUnits=2)
+    renter = makeRenter(client)
+
+    checkout(client, item["id"], renter["id"])
+    checkout(client, item["id"], renter["id"])
+
+    availability = client.get(f"/equipment/{item['id']}/availability").get_json()
+    assert availability["available_units"] == 0
+    assert availability["total_units"] == 2
+
+# Tests that the clerk can tell whether gear is available (R11).
+# Expected: once every unit is rented, a further checkout is refused and available_units stays at 0.
+# Known defect: checkout does not check stock, so available_units becomes -1.
+def testAvailabilityNeverGoesBelowZero(client):
+    item = makeEquipment(client, totalUnits=1)
+    renter = makeRenter(client)
+    checkout(client, item["id"], renter["id"])
+
+    response = client.post(
+        "/rentals", json={"equipment_id": item["id"], "renter_id": renter["id"]}
+    )
+
+    assert response.status_code == 400
+    assert client.get(f"/equipment/{item['id']}/availability").get_json()["available_units"] == 0
+
+# Tests that the availability of equipment that does not exist returns a 404 error.
+def testAvailabilityOfNonexistentEquipmentReturns404(client):
+    response = client.get("/equipment/999/availability")
+    assert response.status_code == 404
