@@ -6,7 +6,8 @@ Test includes:
     Delete equipment
     Add renter
     Check out equipment
-
+    Return equipment
+    Extend a rental
 """
 import re
 from datetime import date, timedelta
@@ -278,3 +279,100 @@ def test_failed_checkout_does_not_use_up_a_unit(client):
 
     assert client.post("/rentals", json={"equipment_id": item["id"]}).status_code >= 400
     assert units(client, item["id"]) == 2
+
+def test_check_out_form_adds_a_rental_to_the_rentals_page(client):
+    client.post("/ui/equipment", data={"name": "Tent", "category": "Camping", "total_units": "2"})
+    client.post("/ui/renters", data={"name": "Sam Lee", "email": "sam@example.com"})
+
+    r = client.post("/ui/rentals", data={"equipment_id": "1", "renter_id": "1"})
+
+    assert r.status_code == 302
+    assert rows(client, "/ui/rentals") == [["1", "1", "1", TODAY, DUE, "-", "Return"]]
+
+#Return equipment (PUT /rentals/<id>/return, Return button)
+
+def test_return_sets_the_return_date_and_makes_the_unit_available_again(client):
+    """R11"""
+    rental = rent(client)
+
+    r = client.put(f"/rentals/{rental['id']}/return")
+
+    assert r.status_code == 200
+    assert r.get_json()["return_date"] == TODAY
+    assert units(client, rental["equipment_id"]) == 2
+
+
+def test_returned_rental_stays_in_the_rental_history(client):
+    """R6"""
+    rental = rent(client)
+    client.put(f"/rentals/{rental['id']}/return")
+
+    history = client.get(f"/rentals?equipment_id={rental['equipment_id']}").get_json()
+    assert history == [{**rental, "return_date": TODAY}]
+
+
+def test_returning_the_same_rental_twice_is_refused_and_adds_no_second_unit(client):
+    rental = rent(client)
+    client.put(f"/rentals/{rental['id']}/return")
+
+    r = client.put(f"/rentals/{rental['id']}/return")
+
+    assert r.status_code == 400
+    assert r.get_json() == {"error": "Rental already returned"}
+    assert units(client, rental["equipment_id"]) == 2
+
+
+def test_return_button_marks_the_rental_returned_on_the_rentals_page(client):
+    """R6, R11"""
+    client.post("/ui/equipment", data={"name": "Tent", "category": "Camping", "total_units": "2"})
+    client.post("/ui/renters", data={"name": "Sam Lee", "email": "sam@example.com"})
+    client.post("/ui/rentals", data={"equipment_id": "1", "renter_id": "1"})
+
+    r = client.post("/ui/rentals/1/return")
+
+    assert r.status_code == 302
+    assert rows(client, "/ui/rentals") == [["1", "1", "1", TODAY, DUE, TODAY, ""]]
+    assert rows(client, "/ui/equipment")[0][3:5] == ["2", "2"]
+
+
+#Extend a rental (PUT /rentals/<id>/extend)
+
+def test_extend_adds_the_days_to_the_due_date_and_saves_it(client):
+    """R20, R22"""
+    rental = rent(client)
+
+    r = client.put(f"/rentals/{rental['id']}/extend", json={"days": 2})
+
+    new_due = (date.today() + timedelta(days=9)).isoformat()
+    assert r.status_code == 200
+    assert r.get_json()["due_date"] == new_due
+    assert client.get("/rentals").get_json()[0]["due_date"] == new_due
+
+
+def test_extend_a_returned_rental_is_refused_and_keeps_the_due_date(client):
+    rental = rent(client)
+    client.put(f"/rentals/{rental['id']}/return")
+
+    r = client.put(f"/rentals/{rental['id']}/extend", json={"days": 2})
+
+    assert r.status_code == 400
+    assert r.get_json() == {"error": "Rental already returned"}
+    assert client.get("/rentals").get_json()[0]["due_date"] == DUE
+
+
+def test_extension_of_more_than_two_days_is_refused(client):
+    """R22: an extension is limited to 2 days."""
+    rental = rent(client)
+
+    assert client.put(f"/rentals/{rental['id']}/extend", json={"days": 5}).status_code >= 400
+    assert client.get("/rentals").get_json()[0]["due_date"] == DUE
+
+
+def test_extension_less_than_three_days_before_the_due_date_is_refused(client):
+    """R22: must be requested at least 3 days before the due date (due date set to tomorrow)."""
+    rental = rent(client)
+    tomorrow = date.today() + timedelta(days=1)
+    store.rentals[rental["id"]].due_date = tomorrow
+
+    assert client.put(f"/rentals/{rental['id']}/extend", json={"days": 1}).status_code >= 400
+    assert client.get("/rentals").get_json()[0]["due_date"] == tomorrow.isoformat()
