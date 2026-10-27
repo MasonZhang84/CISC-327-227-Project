@@ -20,24 +20,38 @@ def list_rentals():
     return jsonify([r.to_dict() for r in results])
 
 
+def checkout_error(equipment_id, renter_id):
+    """Return (message, status) if the check-out must be refused, else None."""
+    item = store.equipment.get(equipment_id)
+    if item is None:
+        return "Equipment not found", 404
+    if renter_id not in store.renters:
+        return "Renter not found", 404
+    if not item.is_available:
+        return "Equipment is out of service", 400
+    if item.available_units < 1:
+        return "No units available", 400
+    return None
+
+
 @rentals_bp.route("", methods=["POST"])
 def checkout_equipment():
-    data = request.get_json()
-    item = store.equipment.get(data["equipment_id"])
-    if item is None:
-        return jsonify({"error": "Equipment not found"}), 404
+    data = request.get_json(silent=True) or {}
+    equipment_id = data.get("equipment_id")
+    renter_id = data.get("renter_id")
+    if equipment_id is None or renter_id is None:
+        return jsonify({"error": "equipment_id and renter_id are required"}), 400
 
-    # BUG: does not check item.is_available — out-of-service equipment can
-    # still be checked out. The check below is intentionally absent:
-    #   if not item.is_available:
-    #       return jsonify({"error": "Equipment is out of service"}), 400
-    item.available_units -= 1
+    error = checkout_error(equipment_id, renter_id)
+    if error is not None:
+        return jsonify({"error": error[0]}), error[1]
 
+    store.equipment[equipment_id].available_units -= 1
     rental_id = store.next_id("rental")
     rental = Rental(
         id=rental_id,
-        equipment_id=data["equipment_id"],
-        renter_id=data["renter_id"],
+        equipment_id=equipment_id,
+        renter_id=renter_id,
         due_date=Rental.default_due_date(),
         deposit_amount=data.get("deposit_amount", 0.0),
     )

@@ -376,3 +376,68 @@ def test_extension_less_than_three_days_before_the_due_date_is_refused(client):
 
     assert client.put(f"/rentals/{rental['id']}/extend", json={"days": 1}).status_code >= 400
     assert client.get("/rentals").get_json()[0]["due_date"] == tomorrow.isoformat()
+
+#enhancement test
+#Enhancement: check out availability enforcement (R10, R11, R1, R2)
+
+def test_refused_checkout_creates_no_rental_and_keeps_the_unit_count(client):
+    item = add_equipment(client, total_units=1)
+    renter = add_renter(client)
+    check_out(client, item["id"], renter["id"])
+
+    r = check_out(client, item["id"], renter["id"])
+
+    assert r.status_code == 400
+    assert r.get_json() == {"error": "No units available"}
+    assert len(client.get("/rentals").get_json()) == 1
+    assert units(client, item["id"]) == 0
+
+
+def test_out_of_service_item_is_refused_with_a_message_and_not_rented(client):
+    item = add_equipment(client, total_units=2)
+    renter = add_renter(client)
+    client.patch(f"/equipment/{item['id']}/status", json={"is_available": False})
+
+    r = check_out(client, item["id"], renter["id"])
+
+    assert r.status_code == 400
+    assert r.get_json() == {"error": "Equipment is out of service"}
+    assert units(client, item["id"]) == 2
+
+
+def test_unknown_renter_is_refused_with_404_and_the_unit_is_kept(client):
+    item = add_equipment(client, total_units=2)
+
+    r = check_out(client, item["id"], 999)
+
+    assert r.status_code == 404
+    assert r.get_json() == {"error": "Renter not found"}
+    assert units(client, item["id"]) == 2
+
+
+def test_checkout_without_ids_is_a_400_not_a_server_error(client):
+    assert client.post("/rentals", json={}).status_code == 400
+    assert client.post("/rentals", json={"equipment_id": 1}).status_code == 400
+
+
+def test_item_can_be_rented_again_after_the_last_unit_is_returned(client):
+    item = add_equipment(client, total_units=1)
+    renter = add_renter(client)
+    first = check_out(client, item["id"], renter["id"]).get_json()
+    assert check_out(client, item["id"], renter["id"]).status_code == 400
+
+    client.put(f"/rentals/{first['id']}/return")
+
+    assert check_out(client, item["id"], renter["id"]).status_code == 201
+    assert units(client, item["id"]) == 0
+
+
+def test_check_out_form_does_not_rent_an_item_with_no_units_left(client):
+    item = add_equipment(client, total_units=1)
+    renter = add_renter(client)
+    check_out(client, item["id"], renter["id"])
+
+    client.post("/ui/rentals", data={"equipment_id": "1", "renter_id": "1"})
+
+    assert len(rows(client, "/ui/rentals")) == 1
+    assert units(client, item["id"]) == 0
