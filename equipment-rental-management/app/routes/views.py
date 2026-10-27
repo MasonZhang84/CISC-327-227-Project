@@ -6,6 +6,7 @@ from app import store
 from app.models.equipment import Equipment
 from app.models.renter import Renter
 from app.models.rental import Rental
+from app.routes.rentals import checkout_error
 
 views_bp = Blueprint("views", __name__)
 
@@ -60,7 +61,7 @@ def rentals_page():
         equipment_id = int(request.form["equipment_id"])
         renter_id = int(request.form["renter_id"])
         item = store.equipment.get(equipment_id)
-        if item is not None:
+        if checkout_error(equipment_id, renter_id) is None:
             item.available_units -= 1
             rental_id = store.next_id("rental")
             rental = Rental(
