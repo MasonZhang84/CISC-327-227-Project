@@ -39,3 +39,12 @@ class Rental:
     @staticmethod
     def default_due_date():
         return date.today() + timedelta(days=RENTAL_PERIOD_DAYS)
+
+    def is_overdue(self, today=None):
+        """True if the equipment is still out and its due date has passed."""
+        today = today or date.today()
+        return self.return_date is None and self.due_date < today
+
+    def days_overdue(self, today=None):
+        today = today or date.today()
+        return (today - self.due_date).days if self.is_overdue(today) else 0

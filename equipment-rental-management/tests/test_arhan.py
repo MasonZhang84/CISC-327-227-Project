@@ -1,4 +1,6 @@
-from datetime import date
+from datetime import date, timedelta
+
+from app import store
 
 # Creates a renter through the API and returns it. It takes the test client, the name and the email as parameters.
 def makeRenter(client, name="Alice", email="alice@example.com"):
@@ -463,3 +465,71 @@ def testReleaseDepositForNonexistentRentalReturns404(client):
     response = client.put("/rentals/999/deposit/release")
     assert response.status_code == 404
     assert response.get_json() == {"error": "Rental not found"}
+
+
+# Rented and overdue reports (GET /reports/rented, GET /reports/overdue)
+
+# Sets a rental's due date a number of days before today so it counts as overdue. It takes the rental id and the number of days late as parameters.
+def makeOverdue(rentalId, daysLate):
+    store.rentals[rentalId].due_date = date.today() - timedelta(days=daysLate)
+
+# Tests that the rented report lists only rentals that have not been returned.
+def testRentedReportListsOnlyUnreturnedRentals(client):
+    renter = makeRenter(client)
+    drill = makeEquipment(client, "Drill")
+    saw = makeEquipment(client, "Saw")
+    stillOut = checkout(client, drill["id"], renter["id"])
+    returned = checkout(client, saw["id"], renter["id"])
+    client.put(f"/rentals/{returned['id']}/return")
+
+    response = client.get("/reports/rented")
+    assert response.status_code == 200
+    assert [r["id"] for r in response.get_json()] == [stillOut["id"]]
+
+# Tests that the overdue report lists a rental past its due date with how many days late it is.
+def testOverdueReportListsRentalPastDueDate(client):
+    renter = makeRenter(client)
+    drill = makeEquipment(client)
+    rental = checkout(client, drill["id"], renter["id"])
+    makeOverdue(rental["id"], 3)
+
+    response = client.get("/reports/overdue")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert len(body) == 1
+    assert body[0]["id"] == rental["id"]
+    assert body[0]["days_overdue"] == 3
+
+# Tests that rentals not yet due, or due today, are not reported as overdue.
+def testOverdueReportExcludesRentalsNotYetPastDue(client):
+    renter = makeRenter(client)
+    drill = makeEquipment(client, totalUnits=2)
+    checkout(client, drill["id"], renter["id"])
+    dueToday = checkout(client, drill["id"], renter["id"])
+    store.rentals[dueToday["id"]].due_date = date.today()
+
+    response = client.get("/reports/overdue")
+    assert response.status_code == 200
+    assert response.get_json() == []
+
+# Tests that a late rental stops being overdue once it is returned.
+def testReturnedRentalIsNotOverdue(client):
+    renter = makeRenter(client)
+    drill = makeEquipment(client)
+    rental = checkout(client, drill["id"], renter["id"])
+    makeOverdue(rental["id"], 5)
+    client.put(f"/rentals/{rental['id']}/return")
+
+    assert client.get("/reports/overdue").get_json() == []
+
+# Tests that the overdue report lists the most overdue rental first.
+def testOverdueReportSortsMostOverdueFirst(client):
+    renter = makeRenter(client)
+    drill = makeEquipment(client, totalUnits=2)
+    slightlyLate = checkout(client, drill["id"], renter["id"])
+    veryLate = checkout(client, drill["id"], renter["id"])
+    makeOverdue(slightlyLate["id"], 1)
+    makeOverdue(veryLate["id"], 10)
+
+    body = client.get("/reports/overdue").get_json()
+    assert [r["id"] for r in body] == [veryLate["id"], slightlyLate["id"]]
