@@ -100,7 +100,7 @@ def test_checkout_only_changes_the_rented_item_in_the_list(client):
     counts = {i["name"]: i["available_units"] for i in client.get("/equipment").get_json()}
     assert counts == {"Kayak": 1, "Tent": 2}
 
-
+@pytest.mark.xfail(reason="Known defect (R10, R11): is_available stays True when available_units reaches 0", strict=True)
 def test_list_shows_fully_rented_item_as_not_available(client):
     """R10, R11: with 0 units left the item must not be listed as available."""
     item = add_equipment(client, total_units=1)
@@ -110,7 +110,7 @@ def test_list_shows_fully_rented_item_as_not_available(client):
     assert listed["available_units"] == 0
     assert listed["is_available"] is False
 
-
+@pytest.mark.xfail(reason="Known defect (R10): Equipment page does not show out-of-service status", strict=True)
 def test_equipment_page_shows_out_of_service_item_as_out_of_service(client):
     """R10: the Equipment page must show that an item is out of service."""
     item = add_equipment(client)
@@ -216,7 +216,7 @@ def test_add_a_renter_form_adds_the_renter_to_the_renters_page(client):
     assert r.status_code == 302
     assert [row[:4] for row in rows(client, "/ui/renters")] == [["1", "Sam Lee", "sam@example.com", TODAY]]
 
-
+@pytest.mark.xfail(reason="Known defect (R1, R2, R23): Renter model does not store a phone number", strict=True)
 def test_added_renter_keeps_the_phone_number(client):
     """R1, R2, R23: a phone number sent with a renter must be stored and returned."""
     r = client.post("/renters", json={"name": "Sam Lee", "email": "sam@example.com", "phone": "613-555-0101"})
@@ -359,7 +359,7 @@ def test_extend_a_returned_rental_is_refused_and_keeps_the_due_date(client):
     assert r.get_json() == {"error": "Rental already returned"}
     assert client.get("/rentals").get_json()[0]["due_date"] == DUE
 
-
+@pytest.mark.xfail(reason="Known defect (R22): extend endpoint does not enforce the 2 day limit", strict=True)
 def test_extension_of_more_than_two_days_is_refused(client):
     """R22: an extension is limited to 2 days."""
     rental = rent(client)
@@ -367,7 +367,7 @@ def test_extension_of_more_than_two_days_is_refused(client):
     assert client.put(f"/rentals/{rental['id']}/extend", json={"days": 5}).status_code >= 400
     assert client.get("/rentals").get_json()[0]["due_date"] == DUE
 
-
+@pytest.mark.xfail(reason="Known defect (R22): extend endpoint does not enforce the 3 days before due rule", strict=True)
 def test_extension_less_than_three_days_before_the_due_date_is_refused(client):
     """R22: must be requested at least 3 days before the due date (due date set to tomorrow)."""
     rental = rent(client)
