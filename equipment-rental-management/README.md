@@ -57,6 +57,7 @@ app working without a REST client, and calls the same in-memory store.
 | GET | `/rentals?renter_id=&equipment_id=` | Look up rentals |
 | GET | `/reports/rented` | Report of currently rented (unreturned) equipment |
 | GET | `/reports/overdue` | Report of unreturned rentals past their due date, with `days_overdue` |
+| POST| /rentals/<rental_id>/reminder | Send an overdue-return reminder to the renter. 404 if the rental is not found; 400 if already returned or not overdue; otherwise 200 with `reminder_sent` true/false. |
 
 ## Tests
 

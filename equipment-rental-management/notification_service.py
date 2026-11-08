@@ -21,6 +21,8 @@ Use clear_notifications before and after tests that use the real simulator.
 
 _notifications = []
 
+SUBJECT_PREFIX = "[Equipment Rental]"
+
 
 def is_service_available() -> bool:
     """Return True for this local simulator.
@@ -50,7 +52,7 @@ def send_notification(recipient: str, subject: str, message: str) -> bool:
 
     _notifications.append({
         "recipient": recipient,
-        "subject": subject,
+        "subject": f"{SUBJECT_PREFIX} {subject}",
         "message": message,
     })
     return True

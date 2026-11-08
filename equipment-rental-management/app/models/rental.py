@@ -14,6 +14,7 @@ class Rental:
         return_date=None,
         deposit_amount=0.0,
         deposit_released=False,
+        reminder_sent=False,
     ):
         self.id = id
         self.equipment_id = equipment_id
@@ -23,6 +24,7 @@ class Rental:
         self.return_date = return_date
         self.deposit_amount = deposit_amount
         self.deposit_released = deposit_released
+        self.reminder_sent = reminder_sent
 
     def to_dict(self):
         return {
@@ -34,6 +36,7 @@ class Rental:
             "return_date": self.return_date.isoformat() if self.return_date else None,
             "deposit_amount": self.deposit_amount,
             "deposit_released": self.deposit_released,
+            "reminder_sent": self.reminder_sent,
         }
 
     @staticmethod
