@@ -348,7 +348,7 @@ def testLookupRentalsByEquipmentId(client):
 
 # Tests that the clerk can look up rental information for a renter (R7).
 # Expected: only Alice's rental (equipment = Saw) is returned.
-# Known defect: the renter_id filter compares against equipment_id, so it returns Bob's rental of equipment #1 instead.
+# Previously failed because the renter_id filter compared against equipment_id; fixed in A3.
 def testLookupRentalsByRenterId(client):
     rentals = makeCrossedRentals(client)
 
@@ -438,7 +438,7 @@ def testReleaseDepositAfterReturnReportsReleased(client):
 
 # Tests that once released, the rental record shows the deposit as released (R13).
 # Expected: a later lookup shows deposit_released == True.
-# Known defect: release_deposit() returns True in its response but never sets rental.deposit_released, so the stored value stays False.
+# Previously failed because release_deposit() never set rental.deposit_released; fixed in A3.
 def testReleaseDepositIsPersistedOnRental(client):
     rental = makeReturnedRentalWithDeposit(client)
 

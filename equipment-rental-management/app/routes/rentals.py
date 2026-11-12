@@ -15,7 +15,7 @@ def list_rentals():
     renter_id = request.args.get("renter_id", type=int)
     equipment_id = request.args.get("equipment_id", type=int)
     if renter_id is not None:
-        results = [r for r in results if r.equipment_id == renter_id]
+        results = [r for r in results if r.renter_id == renter_id]
     if equipment_id is not None:
         results = [r for r in results if r.equipment_id == equipment_id]
     return jsonify([r.to_dict() for r in results])
@@ -93,21 +93,14 @@ def extend_rental(rental_id):
 
 @rentals_bp.route("/<int:rental_id>/deposit/release", methods=["PUT"])
 def release_deposit(rental_id):
-    """Release the damage deposit hold for a returned rental.
-
-    BUG: this endpoint returns {"deposit_released": true} in the response
-    but does NOT persist the change on the rental object. A subsequent GET
-    on the rental will still show deposit_released as false. The missing line
-    is:
-        rental.deposit_released = True
-    """
+    """Release the damage deposit hold for a returned rental."""
     rental = store.rentals.get(rental_id)
     if rental is None:
         return jsonify({"error": "Rental not found"}), 404
     if rental.return_date is None:
         return jsonify({"error": "Equipment has not been returned yet"}), 400
 
-    # BUG: rental.deposit_released is never set to True here — state is not persisted.
+    rental.deposit_released = True
     return jsonify({"rental_id": rental_id, "deposit_released": True})
 
 @rentals_bp.route("/<int:rental_id>/reminder", methods=["POST"])
